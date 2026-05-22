@@ -1,0 +1,598 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>PHP Lava Platformer - Speedrun Edition</title>
+    <style>
+        body {
+            margin: 0;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #ui {
+            margin-bottom: 10px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        canvas {
+            background: #22252a;
+            border: 4px solid #ff4757;
+            box-shadow: 0 0 30px rgba(255, 71, 87, 0.3);
+        }
+        .controls-hint {
+            margin-top: 10px;
+            color: #aaa;
+            font-size: 14px;
+            text-align: center;
+            line-height: 1.5;
+        }
+        .btn-reset {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        #timerDisplay {
+            color: #67e8f9;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <span>Fase: <strong id="levelDisplay">1</strong> / 8</span> |
+        <span>Tempo: <span id="timerDisplay">00:00</span></span> |
+        <span>Moedas: <span id="score">0</span></span> | 
+        <span><strong>Recorde: <span id="highscore"><?php echo $_SESSION['highscore']; ?></span></strong></span>
+        <button type="button" class="btn-reset" onclick="reiniciarJogo()">Reiniciar Jogo</button>
+    </div>
+
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+    <div class="controls-hint">
+        Setas <strong>Esquerda / Direita</strong> movem | Seta para <strong>Cima</strong> pula.<br>
+        <span style="color: #67e8f9; font-weight: bold;">MODO SPEEDRUN: Seja o mais rápido possível para registrar seu melhor tempo!</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- SISTEMA DE ÁUDIO DINÂMICO ---
+        let audioCtx = null;
+        let musicaIntervalo = null;
+        let musicaNotasIndex = 0;
+        let musicaTocando = false;
+        let tipoMusicaAtual = ''; 
+        
+        // INSTÂNCIA GLOBAL DO ÁUDIO DE VITÓRIA (Controlável)
+        let audioFinalInstancia = null;
+
+        function iniciarAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            if (!musicaTocando) {
+                iniciarMusica(faseAtual >= 4 ? 'megalovania' : 'normal');
+                musicaTocando = true;
+            }
+        }
+
+        function iniciarMusica(tipo) {
+            if (tipoMusicaAtual === tipo) return; 
+            tipoMusicaAtual = tipo;
+            musicaNotasIndex = 0;
+            
+            if (musicaIntervalo) clearInterval(musicaIntervalo);
+
+            if (tipo === 'megalovania') {
+                const d4 = 293.66, d5 = 587.33, a4 = 440.00, gs4 = 415.30, g4 = 392.00, f4 = 349.23, c4 = 261.63, b3 = 246.94;
+                const notasMegalovania = [
+                    d4, d4, d5, a4, gs4, g4, f4, d4, f4, g4,
+                    c4, c4, d5, a4, gs4, g4, f4, d4, f4, g4,
+                    b3, b3, d5, a4, gs4, g4, f4, d4, f4, g4
+                ];
+                const tempos = [100, 100, 200, 200, 200, 200, 200, 100, 100, 100];
+
+                function rodarNota() {
+                    if (gameOver || victory || !audioCtx || tipoMusicaAtual !== 'megalovania') return;
+                    
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.connect(gain); gain.connect(audioCtx.destination);
+                    
+                    osc.type = 'sawtooth'; 
+                    let idx = musicaNotasIndex % notasMegalovania.length;
+                    osc.frequency.setValueAtTime(notasMegalovania[idx], audioCtx.currentTime);
+                    
+                    gain.gain.setValueAtTime(0.05, audioCtx.currentTime); 
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+                    
+                    osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+                    
+                    musicaNotasIndex++;
+                    let tempoProxima = tempos[idx % tempos.length];
+                    musicaIntervalo = setTimeout(rodarNota, tempoProxima);
+                }
+                rodarNota();
+            } else {
+                const melodiaNormal = [220, 233, 261, 233, 220, 196, 220, 165]; 
+                musicaIntervalo = setInterval(() => {
+                    if (gameOver || victory || !audioCtx) return;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.connect(gain); gain.connect(audioCtx.destination);
+                    osc.type = 'square'; 
+                    osc.frequency.setValueAtTime(melodiaNormal[musicaNotasIndex % melodiaNormal.length], audioCtx.currentTime);
+                    gain.gain.setValueAtTime(0.04, audioCtx.currentTime); 
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+                    osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+                    musicaNotasIndex++;
+                }, 400);
+            }
+        }
+
+        function tocarSomTrovao() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.4);
+            gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+        }
+
+        function tocarSomGameOver() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.6);
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.6);
+        }
+
+        function tocarSomMoeda() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+            osc.type = 'square';
+            const agora = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(523.25, agora);
+            osc.frequency.setValueAtTime(880.00, agora + 0.08);
+            gainNode.gain.setValueAtTime(0.12, agora);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, agora + 0.25);
+            osc.start(agora); osc.stop(agora + 0.25);
+        }
+
+        // FUNÇÃO DE VITÓRIA CARREGANDO O MP3 DO SEU PC CORRETAMENTE
+        function tocarSomVitoria() {
+            // Criamos o objeto apontando para o nome simplificado
+            audioFinalInstancia = new Audio('final.mp3');
+            audioFinalInstancia.volume = 0.4;
+            
+            // O play() precisa do catch caso o navegador tente bloquear o áudio
+            audioFinalInstancia.play().catch(e => {
+                console.log("O navegador bloqueou o áudio. Clique na tela para liberar o som.", e);
+            });
+        }
+
+        // --- DATA DE TODAS AS 8 FASES ---
+        const fases = [
+            { // FASE 1
+                playerStart: { x: 100, y: 350 }, redDot: { x: 400, y: 180, radius: 12 }, platColor: '#4b5563',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 80, y: 390, width: 150, height: 15 },
+                    { x: 300, y: 320, width: 180, height: 15 }, { x: 550, y: 250, width: 150, height: 15 },
+                    { x: 250, y: 160, width: 150, height: 15 }, { x: 50, y: 220, width: 120, height: 15 }, { x: 480, y: 100, width: 200, height: 15 }
+                ],
+                coins: [{ x: 150, y: 350 }, { x: 380, y: 280 }, { x: 620, y: 210 }, { x: 100, y: 180 }, { x: 300, y: 120 }, { x: 580, y: 60 }]
+            },
+            { // FASE 2
+                playerStart: { x: 50, y: 420 }, redDot: { x: 400, y: 250, radius: 18 }, platColor: '#4b5563',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 150, y: 410, width: 80, height: 15 },
+                    { x: 300, y: 350, width: 80, height: 15 }, { x: 100, y: 280, width: 100, height: 15 },
+                    { x: 350, y: 200, width: 100, height: 15 }, { x: 600, y: 300, width: 120, height: 15 },
+                    { x: 650, y: 150, width: 80, height: 15 }, { x: 200, y: 100, width: 120, height: 15 }
+                ],
+                coins: [{ x: 190, y: 370 }, { x: 340, y: 310 }, { x: 150, y: 240 }, { x: 400, y: 160 }, { x: 660, y: 260 }, { x: 260, y: 60 }]
+            },
+            { // FASE 3
+                playerStart: { x: 700, y: 420 }, redDot: { x: 200, y: 230, radius: 15 }, platColor: '#4b5563',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 550, y: 400, width: 150, height: 15 },
+                    { x: 350, y: 330, width: 150, height: 15 }, { x: 150, y: 270, width: 150, height: 15 },
+                    { x: 350, y: 190, width: 150, height: 15 }, { x: 580, y: 120, width: 150, height: 15 }
+                ],
+                coins: [{ x: 620, y: 360 }, { x: 420, y: 290 }, { x: 220, y: 230 }, { x: 420, y: 150 }, { x: 650, y: 80 }]
+            },
+            { // FASE 4 (Azul)
+                playerStart: { x: 100, y: 420 }, redDot: { x: -1000, y: -1000, radius: 0 }, platColor: '#2563eb',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 250, y: 410, width: 100, height: 15 }, 
+                    { x: 480, y: 360, width: 100, height: 15 }, { x: 680, y: 300, width: 100, height: 15 },
+                    { x: 450, y: 220, width: 100, height: 15 }, { x: 200, y: 180, width: 100, height: 15 }, { x: 400, y: 110, width: 120, height: 15 }
+                ],
+                coins: [{ x: 300, y: 370 }, { x: 530, y: 320 }, { x: 730, y: 260 }, { x: 250, y: 140 }, { x: 460, y: 70 }]
+            },
+            { // FASE 5 (Roxo)
+                playerStart: { x: 400, y: 420 }, redDot: { x: -1000, y: -1000, radius: 0 }, platColor: '#7c3aed',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 150, y: 390, width: 120, height: 15 }, 
+                    { x: 530, y: 390, width: 120, height: 15 }, { x: 300, y: 300, width: 200, height: 15 }, 
+                    { x: 150, y: 210, width: 120, height: 15 }, { x: 530, y: 210, width: 120, height: 15 }, { x: 340, y: 120, width: 120, height: 15 }
+                ],
+                coins: [{ x: 210, y: 350 }, { x: 590, y: 350 }, { x: 400, y: 260 }, { x: 210, y: 170 }, { x: 590, y: 170 }, { x: 400, y: 80 }]
+            },
+            { // FASE 6 (Ciano)
+                playerStart: { x: 100, y: 420 }, redDot: { x: -1000, y: -1000, radius: 0 }, platColor: '#06b6d4',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 80, y: 380, width: 140, height: 15 },
+                    { x: 330, y: 350, width: 140, height: 15 }, { x: 580, y: 380, width: 140, height: 15 },
+                    { x: 450, y: 240, width: 130, height: 15 }, { x: 200, y: 210, width: 130, height: 15 }, { x: 320, y: 110, width: 160, height: 15 }
+                ],
+                coins: [{ x: 150, y: 330 }, { x: 400, y: 300 }, { x: 650, y: 330 }, { x: 260, y: 160 }, { x: 400, y: 70 }]
+            },
+            { // FASE 7 (Rosa)
+                playerStart: { x: 700, y: 420 }, redDot: { x: -1000, y: -1000, radius: 0 }, platColor: '#ec4899',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 600, y: 400, width: 110, height: 15 },
+                    { x: 430, y: 330, width: 110, height: 15 }, { x: 260, y: 260, width: 110, height: 15 },
+                    { x: 100, y: 190, width: 110, height: 15 }, { x: 280, y: 120, width: 200, height: 15 }
+                ],
+                coins: [{ x: 655, y: 350 }, { x: 485, y: 280 }, { x: 315, y: 210 }, { x: 155, y: 140 }, { x: 380, y: 70 }]
+            },
+            { // FASE 8 (Esmeralda)
+                playerStart: { x: 100, y: 420 }, redDot: { x: -1000, y: -1000, radius: 0 }, platColor: '#059669',
+                platforms: [
+                    { x: 0, y: 480, width: 800, height: 20 }, { x: 100, y: 380, width: 160, height: 15 },
+                    { x: 300, y: 365, width: 160, height: 15 },
+                    { x: 500, y: 300, width: 200, height: 15 }, { x: 150, y: 210, width: 200, height: 15 },
+                    { x: 450, y: 130, width: 250, height: 15 }
+                ],
+                coins: [{ x: 180, y: 330 }, { x: 600, y: 250 }, { x: 250, y: 160 }, { x: 575, y: 80 }]
+            }
+        ];
+
+        // --- ESTADO DO JOGO ---
+        const gravity = 0.4;
+        let score = 0;
+        let gameOver = false;
+        let victory = false;
+        let faseAtual = 6;
+        
+        let tempoInicial = 0;
+        let tempoDecorridoStr = "00:00";
+        let cronometroRodando = false;
+
+        const keys = { right: false, left: false, up: false };
+
+        let player = { width: 30, height: 40, speed: 5, velX: 0, velY: 0, grounded: false };
+        let lava = { y: 500, speed: 0.4 };
+        let lavaParticles = []; 
+        let redDot, platforms, coins, corAtualPlataforma;
+
+        let pingosChuva = [];
+        let raiosAtivos = []; 
+
+        function atualizarCronometro() {
+            if (gameOver || victory || !cronometroRodando) return;
+            
+            let tempoAtual = Date.now();
+            let diferencaSegundos = Math.floor((tempoAtual - tempoInicial) / 1000);
+            
+            let minutos = Math.floor(diferencaSegundos / 60);
+            let segundos = diferencaSegundos % 60;
+            
+            tempoDecorridoStr = 
+                (minutos < 10 ? "0" + minutos : minutos) + ":" + 
+                (segundos < 10 ? "0" + segundos : segundos);
+                
+            document.getElementById('timerDisplay').innerText = tempoDecorridoStr;
+            setTimeout(atualizarCronometro, 1000);
+        }
+
+        function carregarFase(index) {
+            let dadosFase = fases[index];
+            player.x = dadosFase.playerStart.x;
+            player.y = dadosFase.playerStart.y;
+            player.velX = 0;
+            player.velY = 0;
+            
+            redDot = { ...dadosFase.redDot };
+            corAtualPlataforma = dadosFase.platColor;
+            platforms = JSON.parse(JSON.stringify(dadosFase.platforms));
+            coins = dadosFase.coins.map(c => ({ x: c.x, y: c.y, radius: 8, collected: false }));
+            
+            lava.y = 500;
+            lavaParticles = [];
+            pingosChuva = [];
+            raiosAtivos = [];
+            document.getElementById('levelDisplay').innerText = index + 1;
+
+            if (musicaTocando) {
+                iniciarMusica(index >= 4 ? 'megalovania' : 'normal');
+            }
+        }
+
+       function reiniciarJogo() {
+            iniciarAudioContext(); 
+            
+            // Para a música final se ela estiver tocando ao resetar
+            if (audioFinalInstancia) {
+                audioFinalInstancia.pause();
+                audioFinalInstancia.currentTime = 0; 
+            }
+
+            score = 0;
+            faseAtual = 0;
+            gameOver = false;
+            victory = false;
+            document.getElementById('score').innerText = score;
+            
+            tempoInicial = Date.now();
+            cronometroRodando = true;
+            document.getElementById('timerDisplay').innerText = "00:00";
+            atualizarCronometro();
+
+            carregarFase(faseAtual); 
+        }
+
+        window.addEventListener('keydown', (e) => {
+            iniciarAudioContext();
+            
+            if (!cronometroRodando && !gameOver && !victory) {
+                tempoInicial = Date.now();
+                cronometroRodando = true;
+                atualizarCronometro();
+            }
+
+            if (e.key === 'ArrowRight') keys.right = true;
+            if (e.key === 'ArrowLeft') keys.left = true;
+            if (e.key === 'ArrowUp') keys.up = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowRight') keys.right = false;
+            if (e.key === 'ArrowLeft') keys.left = false;
+            if (e.key === 'ArrowUp') keys.up = false;
+        });
+
+        function salvarRecorde(finalScore) {
+            const formData = new FormData();
+            formData.append('score', finalScore);
+            fetch('jogo.php', { method: 'POST', body: formData })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) document.getElementById('highscore').innerText = data.highscore;
+            });
+        }
+
+        // --- LOOP PRINCIPAL ---
+        function update() {
+            requestAnimationFrame(update);
+
+            if (gameOver) {
+                cronometroRodando = false; 
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#ef4444';
+                ctx.font = 'bold 48px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('SE FUDEU', canvas.width / 2, canvas.height / 2 - 10);
+                ctx.fillStyle = '#fff'; ctx.font = '20px sans-serif';
+                ctx.fillText('Virou churrasquinho!', canvas.width / 2, canvas.height / 2 + 30);
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Clique em "Reiniciar Jogo" no topo para tentar de novo.', canvas.width / 2, canvas.height / 2 + 60);
+                return;
+            }
+
+            if (victory) {
+                cronometroRodando = false; 
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#10b981';
+                ctx.font = 'bold 54px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('VOCÊ ZEROU O JOGO!', canvas.width / 2, canvas.height / 2 - 30);
+                
+                ctx.fillStyle = '#67e8f9'; ctx.font = 'bold 28px sans-serif';
+                ctx.fillText(`TEMPO DE SPEEDRUN: ${tempoDecorridoStr}`, canvas.width / 2, canvas.height / 2 + 20);
+                
+                ctx.fillStyle = '#fff'; ctx.font = '20px sans-serif';
+                ctx.fillText(`Placar Final: ${score} moedas coletadas.`, canvas.width / 2, canvas.height / 2 + 60);
+                return;
+            }
+
+            if (keys.right) player.velX = player.speed;
+            else if (keys.left) player.velX = -player.speed;
+            else player.velX = 0;
+
+            if (keys.up && player.grounded) {
+                player.velY = -11;
+                player.grounded = false;
+            }
+
+            player.velY += gravity;
+            player.x += player.velX;
+            player.y += player.velY;
+
+            if (player.x < 0) player.x = 0;
+            if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+            player.grounded = false;
+
+            if (player.y + player.height < 0) {
+                faseAtual++;
+                if (faseAtual >= fases.length) {
+                    victory = true;
+                    tocarSomVitoria();
+                } else {
+                    carregarFase(faseAtual);
+                }
+                return; 
+            }
+
+            lava.y -= lava.speed;
+            lava.speed = 0.3 + (faseAtual * 0.08) + (score * 0.0015); 
+
+            if (Math.random() < 0.3) { 
+                lavaParticles.push({ x: Math.random() * canvas.width, y: lava.y, size: Math.random() * 5 + 2, speed: Math.random() * 2 + 1, life: 1.0 });
+            }
+
+            lavaParticles.forEach((p, index) => {
+                p.y -= p.speed; p.life -= 0.02;
+                if (p.life <= 0) lavaParticles.splice(index, 1);
+            });
+
+            if (faseAtual >= 4) {
+                for (let i = 0; i < 2; i++) {
+                    pingosChuva.push({ x: Math.random() * canvas.width, y: -10, length: Math.random() * 15 + 10, speed: Math.random() * 10 + 15 });
+                }
+                pingosChuva.forEach((pingo, index) => {
+                    pingo.x -= pingo.speed * 0.15; 
+                    pingo.y += pingo.speed;
+                    if (pingo.y > canvas.height) pingosChuva.splice(index, 1);
+                });
+
+                if (Math.random() < 0.015 && raiosAtivos.length < 2) {
+                    let alvoX = player.x + (player.width / 2) + (Math.random() * 140 - 70);
+                    if (alvoX < 20) alvoX = 20;
+                    if (alvoX > canvas.width - 20) alvoX = canvas.width - 20;
+                    raiosAtivos.push({ x: alvoX, timer: 50, estado: 'mirando' });
+                }
+
+                for (let i = raiosAtivos.length - 1; i >= 0; i--) {
+                    let raio = raiosAtivos[i];
+                    raio.timer--;
+                    if (raio.estado === 'mirando' && raio.timer <= 0) {
+                        raio.estado = 'caindo';
+                        raio.timer = 12; 
+                        tocarSomTrovao();
+                    } else if (raio.estado === 'caindo') {
+                        let distancia = Math.abs((player.x + player.width / 2) - raio.x);
+                        if (distancia < 25) { 
+                            if (!gameOver) tocarSomGameOver();
+                            gameOver = true;
+                        }
+                        if (raio.timer <= 0) raiosAtivos.splice(i, 1);
+                    }
+                }
+            }
+
+            // COLISÃO COM PLATAFORMAS LIMPA E HIGIENIZADA
+            platforms.forEach(plat => {
+                if (player.x < plat.x + plat.width && player.x + player.width > plat.x &&
+                    player.y < plat.y + plat.height && player.y + player.height > plat.y) {
+                    
+                    if (player.velY > 0 && (player.y + player.height - player.velY) <= plat.y) {
+                        player.y = plat.y - player.height;
+                        player.velY = 0;
+                        player.grounded = true;
+                    }
+                }
+            });
+
+            coins.forEach(coin => {
+                if (!coin.collected) {
+                    let distX = Math.abs(coin.x - (player.x + player.width/2));
+                    let distY = Math.abs(coin.y - (player.y + player.height/2));
+                    if (distX < (player.width/2 + coin.radius) && distY < (player.height/2 + coin.radius)) {
+                        coin.collected = true;
+                        tocarSomMoeda(); 
+                        score += 10;
+                        document.getElementById('score').innerText = score;
+                        salvarRecorde(score);
+                    }
+                }
+            });
+
+            if (player.y + player.height >= lava.y) {
+                if (!gameOver) tocarSomGameOver();
+                gameOver = true;
+            }
+
+            // --- RENDERIZAÇÃO ---
+            let telaBranca = raiosAtivos.some(r => r.estado === 'caindo');
+            ctx.fillStyle = telaBranca ? '#f8fafc' : '#22252a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (faseAtual >= 4) {
+                ctx.strokeStyle = 'rgba(186, 230, 253, 0.3)';
+                ctx.lineWidth = 1; ctx.beginPath();
+                pingosChuva.forEach(p => {
+                    ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.speed * 0.15, p.y + p.length);
+                });
+                ctx.stroke();
+
+                raiosAtivos.forEach(raio => {
+                    if (raio.estado === 'mirando') {
+                        ctx.fillStyle = 'rgba(252, 211, 77, 0.25)';
+                        ctx.fillRect(raio.x - 2, 0, 4, canvas.height);
+                    } else if (raio.estado === 'caindo') {
+                        ctx.strokeStyle = '#fff'; ctx.lineWidth = 5;
+                        ctx.shadowColor = '#f59e0b'; ctx.shadowBlur = 15;
+                        ctx.beginPath(); ctx.moveTo(raio.x, 0);
+                        let curY = 0, curX = raio.x;
+                        while(curY < canvas.height) {
+                            curY += Math.random() * 40 + 20; curX += Math.random() * 50 - 25;
+                            ctx.lineTo(curX, curY);
+                        }
+                        ctx.stroke(); ctx.shadowBlur = 0;
+                    }
+                });
+            }
+
+            ctx.fillStyle = corAtualPlataforma; 
+            platforms.forEach(plat => ctx.fillRect(plat.x, plat.y, plat.width, plat.height));
+
+            ctx.fillStyle = '#fbbf24';
+            coins.forEach(coin => {
+                if (!coin.collected) {
+                    ctx.beginPath(); ctx.arc(coin.x, coin.y, coin.radius, 0, Math.PI * 2); ctx.fill();
+                }
+            });
+
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+
+            let lavaGradient = ctx.createLinearGradient(0, lava.y, 0, canvas.height);
+            lavaGradient.addColorStop(0, '#f97316'); lavaGradient.addColorStop(1, '#b91c1c'); 
+            ctx.fillStyle = lavaGradient;
+            ctx.fillRect(0, lava.y, canvas.width, canvas.height - lava.y);
+
+            lavaParticles.forEach(p => {
+                ctx.fillStyle = `rgba(253, 186, 116, ${p.life})`;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+            });
+        }
+
+        carregarFase(faseAtual);
+        update(); 
+
+    </script>
+</body>
+</html>
