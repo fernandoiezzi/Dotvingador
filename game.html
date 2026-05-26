@@ -150,8 +150,8 @@
         // --- SISTEMA DE ÁUDIOS EXTERNOS (MP3) ---
         let audioFinalInstancia = null;
         let audioGameOverMp3 = new Audio('gameovertriste.mp3');
-        audioGameOverMp3.loop = true; // Faz a música triste repetir
-        audioGameOverMp3.volume = 0.6; // Ajuste o volume se precisar (0.0 a 1.0)
+        audioGameOverMp3.loop = true; 
+        audioGameOverMp3.volume = 0.6; 
 
         function voltarParaMenu() {
             if (audioFinalInstancia) {
@@ -162,7 +162,6 @@
                 clearInterval(musicaIntervalo);
                 clearTimeout(musicaIntervalo);
             }
-            // Para o seu MP3 ao voltar ao menu
             audioGameOverMp3.pause();
             audioGameOverMp3.currentTime = 0;
             
@@ -265,7 +264,28 @@
             }
         }
 
-        // Efeito sonoro rápido ao cair na lava (Choque térmico)
+        // --- NOVA FANFARRA DE VITÓRIA (NOVO RECORDE) ---
+        function tocarMusicaVitoriaRecorde() {
+            if (!audioCtx) return;
+            const notas = [261.63, 329.63, 392.00, 523.25, 392.00, 523.25]; 
+            const tempos = [0, 0.15, 0.3, 0.45, 0.6, 0.75]; 
+            const duracoes = [0.1, 0.1, 0.1, 0.1, 0.1, 0.6]; 
+
+            notas.forEach((nota, i) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.type = 'square'; 
+                
+                osc.frequency.setValueAtTime(nota, audioCtx.currentTime + tempos[i]);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime + tempos[i]);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + tempos[i] + duracoes[i]);
+                
+                osc.start(audioCtx.currentTime + tempos[i]);
+                osc.stop(audioCtx.currentTime + tempos[i] + duracoes[i] + 0.1);
+            });
+        }
+
         function tocarSomLava() {
             if (!audioCtx) return;
             const osc = audioCtx.createOscillator();
@@ -282,7 +302,6 @@
             osc.start(); osc.stop(audioCtx.currentTime + 0.8);
         }
 
-        // Efeito sonoro do choque do relâmpago
         function tocarSomRaio() {
             if (!audioCtx) return;
             const osc = audioCtx.createOscillator();
@@ -354,7 +373,10 @@
         
         let tempoInicial = 0;
         let tempoDecorridoStr = "00:00";
+        let tempoFinalSalvo = ""; 
         let cronometroRodando = false;
+        
+        let isShowingRecord = false; 
 
         const keys = { right: false, left: false, up: false };
 
@@ -421,7 +443,6 @@
                 clearTimeout(musicaIntervalo);
             }
             
-            // Para o MP3 triste ao jogar novamente
             audioGameOverMp3.pause();
             audioGameOverMp3.currentTime = 0;
 
@@ -430,6 +451,7 @@
             gameOver = false;
             victory = false;
             causaMorte = ''; 
+            isShowingRecord = false;
             document.getElementById('score').innerText = score;
             
             tempoInicial = Date.now();
@@ -483,18 +505,37 @@
 
             if (victory) {
                 cronometroRodando = false; 
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
-                ctx.fillStyle = '#10b981';
-                ctx.font = 'bold 54px sans-serif'; ctx.textAlign = 'center';
-                ctx.fillText('VOCÊ ZEROU O JOGO!', canvas.width / 2, canvas.height / 2 - 30);
-                
-                ctx.fillStyle = '#67e8f9'; ctx.font = 'bold 28px sans-serif';
-                ctx.fillText(`Seu melhor tempo: ${tempoDecorridoStr}`, canvas.width / 2, canvas.height / 2 + 20);
-                
-                ctx.fillStyle = '#fff'; ctx.font = '20px sans-serif';
-                ctx.fillText(`Placar Final: ${score} moedas.`, canvas.width / 2, canvas.height / 2 + 60);
+                if (isShowingRecord) {
+                    let piscar = Math.floor(Date.now() / 400) % 2 === 0;
+                    
+                    ctx.textAlign = 'center';
+                    ctx.font = '70px sans-serif'; 
+                    ctx.fillText('🏆', canvas.width / 2, canvas.height / 2 - 60);
+                    
+                    if (piscar) {
+                        ctx.fillStyle = '#fbbf24'; 
+                        ctx.font = 'bold 50px Courier New';
+                        ctx.fillText('NOVO RECORDE!!!', canvas.width / 2, canvas.height / 2 + 10);
+                    }
+                    
+                    ctx.fillStyle = '#67e8f9'; 
+                    ctx.font = 'bold 36px Courier New';
+                    ctx.fillText(tempoFinalSalvo, canvas.width / 2, canvas.height / 2 + 70);
+                    
+                } else {
+                    ctx.fillStyle = '#10b981';
+                    ctx.font = 'bold 54px sans-serif'; ctx.textAlign = 'center';
+                    ctx.fillText('VOCÊ ZEROU O JOGO!', canvas.width / 2, canvas.height / 2 - 30);
+                    
+                    ctx.fillStyle = '#67e8f9'; ctx.font = 'bold 28px sans-serif';
+                    ctx.fillText(`Seu tempo: ${tempoFinalSalvo}`, canvas.width / 2, canvas.height / 2 + 20);
+                    
+                    ctx.fillStyle = '#fff'; ctx.font = '20px sans-serif';
+                    ctx.fillText(`Placar Final: ${score} moedas.`, canvas.width / 2, canvas.height / 2 + 60);
+                }
                 return;
             }
 
@@ -528,14 +569,33 @@
                 if (faseAtual >= fases.length) {
                     if (!victory) {
                         victory = true;
-                        salvarResultadoFinal(score, tempoDecorridoStr);
+                        tempoFinalSalvo = tempoDecorridoStr; 
+                        
+                        let currentBestTime = localStorage.getItem('bestTime') || "99:99";
+                        let isNovoRecorde = (tempoFinalSalvo < currentBestTime || currentBestTime === "99:99");
+                        
+                        salvarResultadoFinal(score, tempoFinalSalvo);
                         
                         if (musicaIntervalo) {
                             clearInterval(musicaIntervalo);
                             clearTimeout(musicaIntervalo);
                         }
-                        tocarSomVitoria();
-                        document.getElementById('endGameButtons').classList.remove('hidden');
+
+                        if (isNovoRecorde) {
+                            isShowingRecord = true;
+                            tocarMusicaVitoriaRecorde(); 
+                            
+                            // Aguarda 3.5 segundos (reduzi de 5 para ficar mais dinâmico),
+                            // depois vai para a tela normal E COMEÇA A MÚSICA MP3
+                            setTimeout(() => {
+                                isShowingRecord = false;
+                                tocarSomVitoria(); // TOCA O FINAL.MP3 AQUI!
+                                document.getElementById('endGameButtons').classList.remove('hidden');
+                            }, 3500);
+                        } else {
+                            tocarSomVitoria();
+                            document.getElementById('endGameButtons').classList.remove('hidden');
+                        }
                     }
                 } else {
                     lava.y += canvas.height;
@@ -589,7 +649,6 @@
                                     clearInterval(musicaIntervalo);
                                     clearTimeout(musicaIntervalo);
                                 }
-                                // Toca o arquivo MP3
                                 audioGameOverMp3.play().catch(e => console.log("O navegador bloqueou o áudio MP3.", e));
                                 document.getElementById('endGameButtons').classList.remove('hidden');
                             }
@@ -634,7 +693,6 @@
                         clearInterval(musicaIntervalo);
                         clearTimeout(musicaIntervalo);
                     }
-                    // Toca o arquivo MP3
                     audioGameOverMp3.play().catch(e => console.log("O navegador bloqueou o áudio MP3.", e));
                     document.getElementById('endGameButtons').classList.remove('hidden');
                 }
