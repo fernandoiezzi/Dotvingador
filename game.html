@@ -214,7 +214,7 @@
     </div>
 
     <div class="controls-hint" id="desktopHint">
-        Setas <strong>Esquerda / Direita</strong> movem | Seta para <strong>Cima</strong> pula.<br>
+        Setas ou <strong>W A S D</strong> movem | Seta para <strong>Cima</strong> ou <strong>W</strong> pula.<br>
         <span style="color: #67e8f9; font-weight: bold;">MODO SPEEDRUN: Se a música mudar para tensão, corra!</span>
     </div>
 
@@ -421,7 +421,7 @@
         const fpsInterval = 1000 / FPS;
         let tempoUltimoFrame = Date.now();
 
-        const keys = { right: false, left: false, up: false };
+        const keys = { right: false, left: false, up: false, down: false };
 
         let player = { width: 35, height: 45, speed: 5, velX: 0, velY: 0, grounded: false };
         let lava = { y: 500, speed: 0.5 };
@@ -475,7 +475,7 @@
             if (musicaIntervalo) { clearInterval(musicaIntervalo); clearTimeout(musicaIntervalo); }
             try { audioGameOverMp3.pause(); audioGameOverMp3.currentTime = 0; } catch(e){}
 
-            keys.right = false; keys.left = false; keys.up = false;
+            keys.right = false; keys.left = false; keys.up = false; keys.down = false;
             score = 0; faseAtual = 0; document.getElementById('score').innerText = score;
             
             tempoInicial = Date.now(); cronometroRodando = true;
@@ -534,8 +534,23 @@
             }
         }
 
-        window.addEventListener('keydown', (e) => { iniciarAudioContext(); iniciarInicioCronometroSeguro(); if (e.key === 'ArrowRight') keys.right = true; if (e.key === 'ArrowLeft') keys.left = true; if (e.key === 'ArrowUp') keys.up = true; });
-        window.addEventListener('keyup', (e) => { if (e.key === 'ArrowRight') keys.right = false; if (e.key === 'ArrowLeft') keys.left = false; if (e.key === 'ArrowUp') keys.up = false; });
+        // --- SISTEMA DE CONTROLOS (WASD e SETAS INTEGRADAS) ---
+        window.addEventListener('keydown', (e) => { 
+            iniciarAudioContext(); 
+            iniciarInicioCronometroSeguro(); 
+            if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = true; 
+            if (e.key === 'ArrowLeft'  || e.key.toLowerCase() === 'a') keys.left = true; 
+            if (e.key === 'ArrowUp'    || e.key.toLowerCase() === 'w') keys.up = true; 
+            if (e.key === 'ArrowDown'  || e.key.toLowerCase() === 's') keys.down = true;
+        });
+
+        window.addEventListener('keyup', (e) => { 
+            if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = false; 
+            if (e.key === 'ArrowLeft'  || e.key.toLowerCase() === 'a') keys.left = false; 
+            if (e.key === 'ArrowUp'    || e.key.toLowerCase() === 'w') keys.up = false; 
+            if (e.key === 'ArrowDown'  || e.key.toLowerCase() === 's') keys.down = false;
+        });
+
         function configTouchBotao(btnId, tecla) {
             const btn = document.getElementById(btnId);
             const ativar = (e) => { if(e.cancelable) e.preventDefault(); iniciarAudioContext(); iniciarInicioCronometroSeguro(); keys[tecla] = true; };
@@ -569,7 +584,7 @@
                 if (musicaTocando) { if (lava.y < GAME_HEIGHT) { iniciarMusica('drama'); } else { iniciarMusica(faseAtual >= 4 ? 'megalovania' : 'normal'); } }
                 
                 if (faseAtual !== 0) {
-                    if (!lavaAtiva && (keys.right || keys.left || keys.up)) {
+                    if (!lavaAtiva && (keys.right || keys.left || keys.up || keys.down)) {
                         lavaAtiva = true;
                     }
                 }
@@ -621,7 +636,6 @@
                             player.velY = 0; 
                             player.grounded = true; 
                             
-                            // Gatilho Zona Segura
                             if (faseAtual === 0 && !lavaAtiva && plat.y < 480) {
                                 lavaAtiva = true;
                             }
